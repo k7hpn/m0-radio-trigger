@@ -1,21 +1,32 @@
 # m0-radio-trigger
 
-Use [Adafruit Feather M0 RFM69](https://learn.adafruit.com/adafruit-feather-m0-radio-with-rfm69-packet-radio) Arduino boards with attached buttons to trigger a GPIO port on that board as well as other boards nearby with the correct wireless configuration.
+Use [Adafruit Feather M0 RFM69](https://learn.adafruit.com/adafruit-feather-m0-radio-with-rfm69-packet-radio) boards with attached buttons to trigger attached L298N motor drivers as well as L298Ns attached to other boards nearby with the correct wireless configuration. Everyboard is a sender and a receiver of triggers.
 
-- Most configurables are set in preprocessor directives and constants at the top.
-- Wire up a button which connects `TRIGGER_BUTTON_PIN` to ground.
-- Wire up your item to be triggered to `TRIGGER_OUTPUT_PIN`.
 - Set a unique `key[]` value for encryption between the systems.
-- Set `triggerDelay` to the number of milliseconds to delay after a button is pressed.
-- Adjust `triggerDuration` to how long you want the `TRIGGER_OUTPUT_PIN` to stay on when triggered.
-- Disable `enableLed` if necessary to save power.
 
-If the LED is enabled, here are some things you might see:
+- Trigger S
 
-- One short blink - we've scheduled a trigger from button input
-- Two short blinks - we've scheduled a trigger from wireless input
-- Two long blinks - the trigger is being fired
-- Four long blinks - battery voltage is low
+  1. Triggered by grounding pin `TRIGGER_S` (pin 5 by default)
+  2. Transmits a signal to start this process on all listening devices and does it locally
+  3. Waits `triggerDelay` ms (10 seconds by default)
+  4. Sets `S_OUTPUT_L1` and `S_OUTPUT_R1` low (pins A4 and 0) and `S_OUTPUT_L2` and `S_OUTPUT_R2` high (pins A5 and 1)
+  5. Waits `triggerDuration` ms (2 seconds)
+  6. Sets `S_OUTPUT_L1`, `S_OUTPUT_R1`, `S_OUTPUT_L2`, and `S_OUTPUT_R2` low
+
+- Trigger Wings
+
+  - Grounding pin `TRIGGER_WING_IN` (10) sets `W_OUTPUT_L1` (A0) and `W_OUTPUT_R1` (A2) low, `W_OUTPUT_L2` (A1) and `W_OUTPUT_R2` (A3) high, and sends a message to other boards to do the same
+  - Grounding pin `TRIGGER_WING_OUT` (11) sets `W_OUTPUT_L1` and `W_OUTPUT_R1` high, `W_OUTPUT_L2` and `W_OUTPUT_R2` high, and sends a message to other boards to do the same
+  - Grounding pin `TRIGGER_WING_KILL` (12) sets `W_OUTPUT_L1`, `W_OUTPUT_L2`, `W_OUTPUT_R1`, and `W_OUTPUT_R2` low
+  - Either of the first two actions above schedules the `TRIGGER_WING_KILL` action after `wingsKillDelay` ms (15 seconds)
+
+- On-board LED
+
+  - Disable `enableLed` if necessary to save power.
+  - One short blink - we've scheduled a trigger from button input
+  - Two short blinks - we've scheduled a trigger from wireless input
+  - Two long blinks - a scheduled trigger is being fired
+  - Four long blinks - battery voltage is low
 
 Much of this code came from:
 

@@ -12,28 +12,50 @@
 
 // pin to read battery voltage from, taken from Adafruit docs
 #define TRIGGER_BATTERY_PIN A7
-// pin to monitor for button presses
-#define TRIGGER_BUTTON_PIN 5
-// set this pin high for the duration of the trigger
-#define TRIGGER_OUTPUT_PIN 10
+
+// pin that triggers S when grounded
+#define TRIGGER_S 5
+
+// pins to set for L298N upon S trigger
+#define S_OUTPUT_L1 A4
+#define S_OUTPUT_L2 A5
+#define S_OUTPUT_R1 0
+#define S_OUTPUT_R2 1
+
+// pins that trigger wings when grounded
+#define TRIGGER_WING_IN 10
+#define TRIGGER_WING_OUT 11
+#define TRIGGER_WING_KILL 12
+
+// pins to set for L298N wing triggers
+#define W_OUTPUT_L1 A0
+#define W_OUTPUT_L2 A1
+#define W_OUTPUT_R1 A2
+#define W_OUTPUT_R2 A3
 
 // when the battery is low, flash the on-board LED 4 times this often (in ms)
 const unsigned long batteryStatusDelay = 5000;
-// how long to wait after a button press is read before triggering
+// how long to wait after S button press is read before triggering
 const unsigned long triggerDelay = 10000;
-// the duration a trigger lasts
+// the duration S trigger lasts
 const unsigned long triggerDuration = 2000;
+// how long to kill wings after an in or an out
+const unsigned long wingsKillDelay = 15000;
 // whether or not to light up the on-board LED
 const bool enableLed = true;
 
 // things you probably won't have to change
 
-// check the state of things this frequently
+// checks the state of things this frequently
 const unsigned long checkStatus = 1000;
 // the delay in ms for switch debouncing
 const unsigned long debounceDelay = 50;
+
 // encrypted text for wireless triggering
-const char triggerText[3] = "GO";
+const char triggerText[5] = "GOSM";
+const char wingsOutText[5] = "GOWO";
+const char wingsInText[5] = "GOWI";
+const char wingsKillText[5] = "GOWK";
 
 /************ Radio Setup ***************/
 
@@ -99,8 +121,21 @@ void setup()
   // uncomment below if you want to see setup() console output
   // while (!Serial) { delay(1); }
 
-  pinMode(TRIGGER_BUTTON_PIN, INPUT_PULLUP);
-  pinMode(TRIGGER_OUTPUT_PIN, OUTPUT);
+  pinMode(TRIGGER_S, INPUT_PULLUP);
+  pinMode(TRIGGER_WING_OUT, INPUT_PULLUP);
+  pinMode(TRIGGER_WING_IN, INPUT_PULLUP);
+  pinMode(TRIGGER_WING_KILL, INPUT_PULLUP);
+
+  pinMode(S_OUTPUT_L1, OUTPUT);
+  pinMode(S_OUTPUT_L2, OUTPUT);
+  pinMode(S_OUTPUT_R1, OUTPUT);
+  pinMode(S_OUTPUT_R2, OUTPUT);
+
+  pinMode(W_OUTPUT_L1, OUTPUT);
+  pinMode(W_OUTPUT_L2, OUTPUT);
+  pinMode(W_OUTPUT_R1, OUTPUT);
+  pinMode(W_OUTPUT_R2, OUTPUT);
+
   pinMode(LED, OUTPUT);
 
   pinMode(RFM69_RST, OUTPUT);
@@ -161,80 +196,149 @@ void setup()
   Serial.println(" MHz");
 }
 
-// this will be true when we're latched into a button state to avoid multiple triggers
-bool latch = false;
+// this will be true when we're latched into a S button state to avoid multiple triggers
+bool latchS = false;
+
 // the true value of the button once we've debounced it
-int debouncedButtonValue = HIGH;
+int debouncedS = HIGH;
+int debouncedWO = HIGH;
+int debouncedWI = HIGH;
+int debouncedWK = HIGH;
+
 // the value of millis() when we last checked the battery status, 0 means we have no status
 unsigned long batteryTime = 0;
-// the value of millis() when we were last triggered, 0 means we're not currently triggered
-unsigned long lastTriggerTime = 0;
+// the value of millis() when S last triggered, 0 means we're not currently triggered
+unsigned long lastTriggerSTime = 0;
 // the value of millis() last time we did a status check
 unsigned long timer = 0;
 // the value of millis() when we should turn off the trigger, 0 means we're not pending a turn off
 unsigned long triggerOff = 0;
-// the value of millis() when we last started a debounce
-unsigned long lastDebounceTime = 0;
+// the scheduled time for when to execute a wings kill
+unsigned long scheduleWingsKill = 0;
+
+// the value of millis() when we last started a debounce for each button
+unsigned long lastDebounceSTime = 0;
+unsigned long lastDebounceWOTime = 0;
+unsigned long lastDebounceWITime = 0;
+unsigned long lastDebounceWKTime = 0;
 
 void loop()
 {
-  // read button status
-  int check = digitalRead(TRIGGER_BUTTON_PIN);
+  // read button statuses
+  int checkS = digitalRead(TRIGGER_S);
+  int checkWO = digitalRead(TRIGGER_WING_OUT);
+  int checkWI = digitalRead(TRIGGER_WING_IN);
+  int checkWK = digitalRead(TRIGGER_WING_KILL);
 
-  // once the button has been officially un-pressed we can unlatch
-  if (debouncedButtonValue == HIGH)
+  // once the S button has been officially un-pressed we can unlatch
+  if (debouncedS == HIGH)
   {
-    latch = false;
+    latchS = false;
   }
 
-  // once check has been in state for debounceDelay ms we can officially change debouncedButtonValue
-  if ((millis() - lastDebounceTime) > debounceDelay)
+  // once checkS has been in state for debounceDelay ms we can officially change debouncedS
+  if ((millis() - lastDebounceSTime) > debounceDelay)
   {
-    if (check != debouncedButtonValue)
+    if (checkS != debouncedS)
     {
-      debouncedButtonValue = check;
+      debouncedS = checkS;
     }
 
-    // debounced official button value while we are not latched means we've been triggered
-    if (debouncedButtonValue == LOW && !latch)
+    // debounced button value while we are not latched means we've been triggered
+    if (debouncedS == LOW && !latchS)
     {
-      lastTriggerTime = millis();
-      Serial.print("At time: ");
-      Serial.print(lastTriggerTime);
-      Serial.print(" sending message and scheduling local trigger for: ");
-      Serial.println(lastTriggerTime + triggerDelay);
-      // blink one time to acknowledge
+      lastTriggerSTime = millis();
       Blink(LED, 60, 1);
       // send a message to any other listening triggers
+      Serial.println("S triggered");
       rf69.send((uint8_t *)triggerText, strlen(triggerText));
       rf69.waitPacketSent();
-      // set the latch so each button press results in only one signal to trigger
-      latch = true;
+      // set the latchS so each button press results in only one signal to trigger
+      latchS = true;
+    }
+  }
+
+  if ((millis() - lastDebounceWOTime) > debounceDelay)
+  {
+    if (checkWO != debouncedWO)
+    {
+      debouncedWO = checkWO;
+    }
+
+    // debounced official button value while we are not latchSed means we've been triggered
+    if (debouncedWO == LOW)
+    {
+      WingsOut();
+      Blink(LED, 60, 1);
+      Serial.println("Wings out triggered");
+      debouncedWO = HIGH;
+      // send a message to any other listening triggers
+      rf69.send((uint8_t *)wingsOutText, strlen(wingsOutText));
+      rf69.waitPacketSent();
+    }
+  }
+
+  if ((millis() - lastDebounceWITime) > debounceDelay)
+  {
+    if (checkWI != debouncedWI)
+    {
+      debouncedWI = checkWI;
+    }
+
+    // debounced official button value while we are not latchSed means we've been triggered
+    if (debouncedWI == LOW)
+    {
+      WingsIn();
+      Blink(LED, 60, 1);
+      Serial.println("Wings in triggered");
+      debouncedWI = HIGH;
+      // send a message to any other listening triggers
+      rf69.send((uint8_t *)wingsInText, strlen(wingsInText));
+      rf69.waitPacketSent();
+    }
+  }
+
+  if ((millis() - lastDebounceWKTime) > debounceDelay)
+  {
+    if (checkWK != debouncedWK)
+    {
+      debouncedWK = checkWK;
+    }
+
+    // debounced official button value while we are not latchSed means we've been triggered
+    if (debouncedWK == LOW)
+    {
+      WingsKill();
+      Blink(LED, 60, 1);
+      Serial.println("Wings kill triggered");
+      debouncedWK = HIGH;
+      // send a message to any other listening triggers
+      rf69.send((uint8_t *)wingsKillText, strlen(wingsKillText));
+      rf69.waitPacketSent();
     }
   }
 
   // every checkStatus ms we do an evaluation of what's going on
   if (millis() - timer > checkStatus)
   {
-    if (lastTriggerTime > 0)
-    {
-      // we have a pending trigger, write out for debugging purposes
-      Serial.print("At time: ");
-      Serial.print(millis());
-      Serial.print(", last trigger recorded: ");
-      Serial.print(lastTriggerTime);
-      Serial.print(", trigger fires at: ");
-      Serial.println(lastTriggerTime + triggerDelay);
-    }
     if (triggerOff > 0 && millis() > triggerOff)
     {
-      // we've been triggered for triggerOff ms, time to un-trigger
-      Serial.print("At time: ");
-      Serial.print(millis());
-      Serial.println(" turning the trigger off.");
+      Serial.println("S off");
       triggerOff = 0;
-      digitalWrite(TRIGGER_OUTPUT_PIN, LOW);
+      digitalWrite(S_OUTPUT_L1, LOW);
+      digitalWrite(S_OUTPUT_L2, LOW);
+      digitalWrite(S_OUTPUT_R1, LOW);
+      digitalWrite(S_OUTPUT_R2, LOW);
     }
+
+    if (scheduleWingsKill > 0 && millis() > scheduleWingsKill)
+    {
+      Serial.print("Timer-fired wings kill");
+      scheduleWingsKill = 0;
+      WingsKill();
+      Blink(LED, 200, 2);
+    }
+
     // read current battery voltage value - logic from Adafruit link (see above)
     float batteryVoltage = analogRead(TRIGGER_BATTERY_PIN) * 6.6 / 1024;
     // if the battery value < 3.6 volts then we are in a low battery state
@@ -243,24 +347,24 @@ void loop()
       Blink(LED, 250, 4);
       batteryTime = millis() + batteryStatusDelay;
     }
+
     // reset the clock for our next status update
     timer = millis();
   }
 
-  // if we are at lastTriggerTime + triggerDelay then it's time to turn on the trigger
-  if (lastTriggerTime > 0 && (lastTriggerTime + triggerDelay) < millis())
+  // if we are at lastTriggerSTime + triggerDelay then it's time to turn on the trigger
+  if (lastTriggerSTime > 0 && (lastTriggerSTime + triggerDelay) < millis())
   {
-    digitalWrite(TRIGGER_OUTPUT_PIN, HIGH);
+    // digitalWrite(TRIGGER_OUTPUT_PIN, HIGH);
     triggerOff = millis() + triggerDuration;
-    Serial.print("At time: ");
-    Serial.print(millis());
-    Serial.print(" it is trigger time: ");
-    Serial.print(lastTriggerTime + triggerDelay);
-    Serial.print(" turning off at: ");
-    Serial.println(triggerOff);
     // Two long blinks = trigger going
+    Serial.println("S active");
+    digitalWrite(S_OUTPUT_L1, LOW);
+    digitalWrite(S_OUTPUT_L2, HIGH);
+    digitalWrite(S_OUTPUT_R1, LOW);
+    digitalWrite(S_OUTPUT_R2, HIGH);
     Blink(LED, 200, 2);
-    lastTriggerTime = 0;
+    lastTriggerSTime = 0;
   }
 
   if (rf69.available())
@@ -276,12 +380,33 @@ void loop()
       if (strstr((char *)buf, triggerText))
       {
         Blink(LED, 30, 2); // two blinks for schedule via wireless
-        lastTriggerTime = millis();
+        lastTriggerSTime = millis();
         Serial.print("At time: ");
-        Serial.print(lastTriggerTime);
-        Serial.print(" radio trigger received, will trigger at: ");
-        Serial.print(lastTriggerTime + triggerDelay);
+        Serial.print(lastTriggerSTime);
+        Serial.print(" radio trigger S received, will trigger at: ");
+        Serial.print(lastTriggerSTime + triggerDelay);
         Serial.print(" RSSI: ");
+        Serial.println(rf69.lastRssi(), DEC);
+      }
+      if (strstr((char *)buf, wingsOutText))
+      {
+        WingsOut();
+        Blink(LED, 30, 2); // two blinks for activation via wireless
+        Serial.print("Radio request for wings out, RSSI: ");
+        Serial.println(rf69.lastRssi(), DEC);
+      }
+      if (strstr((char *)buf, wingsInText))
+      {
+        WingsIn();
+        Blink(LED, 30, 2); // two blinks for activation via wireless
+        Serial.print("Radio request for wings in, RSSI: ");
+        Serial.println(rf69.lastRssi(), DEC);
+      }
+      if (strstr((char *)buf, wingsKillText))
+      {
+        WingsKill();
+        Blink(LED, 30, 2); // two blinks for activation via wireless
+        Serial.print("Radio request for wings kill, RSSI: ");
         Serial.println(rf69.lastRssi(), DEC);
       }
     }
@@ -290,6 +415,31 @@ void loop()
       Serial.println("Receive failed");
     }
   }
+}
+
+void WingsIn()
+{
+  digitalWrite(W_OUTPUT_L1, LOW);
+  digitalWrite(W_OUTPUT_L2, HIGH);
+  digitalWrite(W_OUTPUT_R1, LOW);
+  digitalWrite(W_OUTPUT_R2, HIGH);
+  scheduleWingsKill = millis() + wingsKillDelay;
+}
+void WingsOut()
+{
+  digitalWrite(W_OUTPUT_L1, HIGH);
+  digitalWrite(W_OUTPUT_L2, LOW);
+  digitalWrite(W_OUTPUT_R1, HIGH);
+  digitalWrite(W_OUTPUT_R2, LOW);
+  scheduleWingsKill = millis() + wingsKillDelay;
+}
+void WingsKill()
+{
+  digitalWrite(W_OUTPUT_L1, LOW);
+  digitalWrite(W_OUTPUT_L2, LOW);
+  digitalWrite(W_OUTPUT_R1, LOW);
+  digitalWrite(W_OUTPUT_R2, LOW);
+  scheduleWingsKill = 0;
 }
 
 void Blink(byte PIN, byte DELAY_MS, byte loops)
