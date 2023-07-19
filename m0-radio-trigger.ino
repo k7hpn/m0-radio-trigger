@@ -11,14 +11,14 @@
 /** Trigger configurables **/
 
 // pin to read battery voltage from, taken from Adafruit docs
-#define TRIGGER_BATTERY_PIN A7
+//#define TRIGGER_BATTERY_PIN A7
 
 // pin that triggers S when grounded
 #define TRIGGER_S 5
 
 // pins to set for L298N upon S trigger
-#define S_OUTPUT_L1 A4
-#define S_OUTPUT_L2 A5
+#define S_OUTPUT_L1 D24
+#define S_OUTPUT_L2 D25
 #define S_OUTPUT_R1 0
 #define S_OUTPUT_R2 1
 
@@ -27,7 +27,7 @@
 #define TRIGGER_WING_OUT 11
 #define TRIGGER_WING_KILL 12
 
-// pins to set for L298N wing triggers
+// pins to set for L298N wing triggersz
 #define W_OUTPUT_L1 A0
 #define W_OUTPUT_L2 A1
 #define W_OUTPUT_R1 A2
@@ -36,9 +36,9 @@
 // when the battery is low, flash the on-board LED 4 times this often (in ms)
 const unsigned long batteryStatusDelay = 5000;
 // how long to wait after S button press is read before triggering
-const unsigned long triggerDelay = 10000;
+const unsigned long triggerDelay = 2000;
 // the duration S trigger lasts
-const unsigned long triggerDuration = 2000;
+const unsigned long triggerDuration = 4000;
 // how long to kill wings after an in or an out
 const unsigned long wingsKillDelay = 15000;
 // whether or not to light up the on-board LED
@@ -102,6 +102,13 @@ const char wingsKillText[5] = "GOWK";
 #define RFM69_CS 33  // "B"
 #define RFM69_INT 27 // "A"
 #define LED 13
+#endif
+
+#if defined(ARDUINO_ADAFRUIT_FEATHER_RP2040_RFM)  // Feather RP2040 w/Radio
+  #define RFM69_CS   16
+  #define RFM69_INT  21
+  #define RFM69_RST  17
+  #define LED        LED_BUILTIN
 #endif
 
 #if defined(ARDUINO_NRF52832_FEATHER)
@@ -340,13 +347,13 @@ void loop()
     }
 
     // read current battery voltage value - logic from Adafruit link (see above)
-    float batteryVoltage = analogRead(TRIGGER_BATTERY_PIN) * 6.6 / 1024;
+    //float batteryVoltage = analogRead(TRIGGER_BATTERY_PIN) * 6.6 / 1024;
     // if the battery value < 3.6 volts then we are in a low battery state
-    if (batteryTime < millis() && batteryVoltage < 3.6)
-    {
-      Blink(LED, 250, 4);
-      batteryTime = millis() + batteryStatusDelay;
-    }
+    //if (batteryTime < millis() && batteryVoltage < 3.6)
+    //{
+    //  Blink(LED, 250, 4);
+    //  batteryTime = millis() + batteryStatusDelay;
+    //}
 
     // reset the clock for our next status update
     timer = millis();
