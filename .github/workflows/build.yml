@@ -1,0 +1,30 @@
+name: arduino-cli build
+
+on: [push, pull_request]
+
+jobs:
+  arduino-cli-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v2
+
+      - name: Setup arduino-cli
+        uses: arduino/setup-arduino-cli@v1.1.1
+
+      - name: Setup arduino-cli core
+        run: arduino-cli core --additional-urls https://adafruit.github.io/arduino-board-index/package_adafruit_index.json install arduino:samd adafruit:samd
+
+      - name: Add adafruit/RadioHead
+        run: ARDUINO_LIBRARY_ENABLE_UNSAFE_INSTALL=true arduino-cli lib install --git-url https://github.com/adafruit/RadioHead
+
+      - name: Build project
+        run: arduino-cli compile -eb adafruit:samd:adafruit_feather_m0
+
+      - name: Upload compiled binaries
+        uses: actions/upload-artifact@v2
+        with:
+          name: m0-radio-trigger
+          path: build/adafruit.samd.adafruit_feather_m0/*
+          if-no-files-found: ignore
